@@ -45,7 +45,7 @@ def monitor_csv(file_path, last_line_count):
                 print(f"Línea {last_line_count + i + 1}: {estado} (Precisión: {porcentaje_certeza:.2f}%)")
             
             # Actualizar el número de líneas leídas
-            last_line_count = current_line_countbar
+            last_line_count = current_line_count
         time.sleep(5)
 
 if __name__ == "__main__":
