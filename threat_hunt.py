@@ -6,14 +6,15 @@ import os
 
 model = joblib.load('attack_detection_model.pkl')
 
-# Inicializar el codificador
+# Cargar codificadores pre-entrenados
 label_encoders = {}
+for col in ['IP', 'Method', 'Endpoint']:
+    label_encoders[col] = joblib.load(f'label_encoder_{col}.pkl')
 
 def preprocesar_datos(nuevos_datos):
     for col in ['IP', 'Method', 'Endpoint']:
-        le = LabelEncoder()
-        nuevos_datos[col] = le.fit_transform(nuevos_datos[col].astype(str))
-        label_encoders[col] = le  # Guardar el encoder para el futuro
+        le = label_encoders[col]
+        nuevos_datos[col] = le.transform(nuevos_datos[col].astype(str))
     return nuevos_datos
 
 def hacer_predicciones(nuevos_datos):
