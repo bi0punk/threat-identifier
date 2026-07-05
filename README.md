@@ -1,74 +1,95 @@
-# README.md
-
 # Attack Detection System
 
-Este proyecto es un sistema de detección de ataques que utiliza un modelo de machine learning para analizar registros de acceso (`access_logs.csv`) y predecir si un evento registrado es un ataque o no. El sistema monitorea continuamente un archivo CSV, analiza los nuevos registros y predice el estado de cada uno, indicando la probabilidad de que sea un ataque.
+[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python)](https://python.org)
+[![scikit-learn](https://img.shields.io/badge/scikit--learn-1.3%2B-F7931E?logo=scikit-learn)](https://scikit-learn.org/)
+[![CI](https://github.com/drbash/threat-identifier/actions/workflows/ci.yml/badge.svg)](https://github.com/drbash/threat-identifier/actions)
 
----
+Sistema de detección de amenazas que usa Machine Learning para analizar logs de acceso (`access_logs.csv`) y predecir si un evento es un ataque, con monitoreo en tiempo real.
 
-## Requisitos del sistema
+## Contenido
 
-Antes de comenzar, asegúrate de tener instalado lo siguiente:
+- [Características](#caracter%C3%ADsticas)
+- [Stack](#stack)
+- [Estructura](#estructura)
+- [Requisitos](#requisitos)
+- [Instalación](#instalaci%C3%B3n)
+- [Uso](#uso)
+- [Tests](#tests)
+- [Configuración](#configuraci%C3%B3n)
+- [CI/CD](#cicd)
+- [Datos](#datos)
+- [Modelo](#detalles-del-modelo)
+- [Personalización](#personalizaci%C3%B3n)
+- [Limitaciones / Roadmap](#limitaciones--roadmap)
+- [Licencia](#licencia)
 
-- Python 3.8 o superior
-- Bibliotecas requeridas (instalables con `pip install -r requirements.txt`):
-  - pandas
-  - joblib
-  - scikit-learn
+## Características
 
----
+- **Detección en tiempo real**: monitorea continuamente el archivo CSV de logs
+- **Modelo ML**: Random Forest Classifier preentrenado
+- **Predicciones con confianza**: muestra el % de certeza por predicción
+- **Entrenador incluido**: `trainer.py` para reentrenar con datos propios
+- **Preprocesamiento automático**: codificación de IP, Method y Endpoint vía LabelEncoder
 
-## Estructura del proyecto
+## Stack
+
+| Componente | Tecnología |
+|---|---|
+| Lenguaje | Python 3.11+ |
+| ML | scikit-learn (Random Forest) |
+| Procesamiento | pandas, joblib |
+| Testing | pytest |
+
+## Estructura
 
 ```
-├── attack_detection_model.pkl  # Modelo preentrenado
-├── access_logs.csv             # Archivo CSV con los registros a analizar
-├── main.py                     # Código fuente principal
-├── README.md                   # Documento de descripción del proyecto
-├── requirements.txt            # Dependencias del proyecto
+threat-identifier/
+├── threat_hunt.py                   # Monitor en tiempo real
+├── trainer.py                       # Entrenamiento del modelo
+├── attack_detection_model.pkl       # Modelo preentrenado
+├── data.csv                         # Dataset de entrenamiento
+├── access_logs.csv                  # Logs a analizar (ejemplo)
+├── tests/
+├── .env.example
+├── .github/workflows/ci.yml
+├── pyproject.toml
+├── requirements.txt
+└── README.md
 ```
 
----
+## Requisitos
+
+- Python 3.11+
+- pip
 
 ## Instalación
 
-1. **Clonar el repositorio**  
-   Clona el repositorio en tu máquina local:
-   ```bash
-   git clone https://github.com/tu-usuario/attack-detection.git
-   cd attack-detection
-   ```
+```bash
+git clone https://github.com/drbash/threat-identifier.git
+cd threat-identifier
+pip install -r requirements.txt
+```
 
-2. **Instalar las dependencias**  
-   Ejecuta el siguiente comando para instalar todas las dependencias:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Asegurar el modelo preentrenado**  
-   Asegúrate de que el archivo `attack_detection_model.pkl` esté ubicado en el directorio raíz del proyecto.
-
-4. **Agregar el archivo CSV**  
-   Coloca el archivo `access_logs.csv` con tus registros en el directorio raíz.
-
----
+Asegúrate de que `attack_detection_model.pkl` esté en el directorio raíz.
 
 ## Uso
 
-1. **Ejecutar el sistema de monitoreo**  
-   Inicia el script principal con el siguiente comando:
-   ```bash
-   python main.py
-   ```
+### Entrenar modelo
 
-2. **Monitoreo en tiempo real**  
-   El script comenzará a monitorear el archivo `access_logs.csv` en busca de nuevas líneas. Cuando detecte nuevos registros, preprocesará los datos y hará predicciones, indicando si representan un ataque y con qué nivel de confianza.
+```bash
+python trainer.py
+```
 
----
+Esto genera `attack_detection_model.pkl` y los label encoders.
 
-## Ejemplo de salida
+### Monitorear logs en tiempo real
 
-Al ejecutarse, el script produce una salida similar a esta:
+```bash
+python threat_hunt.py
+```
+
+### Ejemplo de salida
 
 ```plaintext
 Monitoreando access_logs.csv... (Total de líneas iniciales: 100)
@@ -77,26 +98,62 @@ Línea 101: No Ataque (Precisión: 96.75%)
 Línea 102: Ataque (Precisión: 89.30%)
 ```
 
----
+## Tests
+
+```bash
+pip install pytest
+pytest tests/ -v
+```
+
+## Configuración
+
+Variables de entorno (ver `.env.example`):
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `CSV_FILE` | `access_logs.csv` | Ruta al archivo de logs |
+
+## CI/CD
+
+GitHub Actions ejecuta lint (Ruff) y tests (pytest) en cada push/PR.
+
+## Datos
+
+El dataset `data.csv` contiene registros históricos con columnas: `IP`, `Timestamp`, `Method`, `Endpoint`, `Status`. El modelo etiqueta como ataque (`Attack=1`) cuando `Status=404`.
 
 ## Detalles del modelo
 
-El modelo `attack_detection_model.pkl` es un clasificador preentrenado basado en técnicas de machine learning. Este utiliza las columnas `IP`, `Method`, y `Endpoint` como características para predecir si un evento es un ataque.
+### Algoritmo
+
+Random Forest Classifier con 100 estimadores.
 
 ### Preprocesamiento
-- **Codificación**: Las columnas `IP`, `Method` y `Endpoint` se convierten a valores numéricos usando `LabelEncoder` de scikit-learn.
-- **Características ignoradas**: Las columnas `Status` y `Timestamp` no se utilizan en el modelo.
 
----
+- **Codificación**: `IP`, `Method`, `Endpoint` → LabelEncoder
+- **Características ignoradas**: `Status`, `Timestamp`
+
+### Features usadas
+
+- `IP` (origen)
+- `Method` (GET, POST, etc.)
+- `Endpoint` (ruta solicitada)
 
 ## Personalización
 
-- **Archivo CSV**: Si deseas usar otro archivo CSV, actualiza la ruta en el script `main.py` en la variable `csv_file_path`.
-- **Modelo personalizado**: Si tienes otro modelo, reemplaza `attack_detection_model.pkl` con tu modelo y asegúrate de que acepte las mismas características.
+- **CSV propio**: cambia la ruta en `threat_hunt.py` (variable `csv_file_path`)
+- **Modelo propio**: reemplaza `attack_detection_model.pkl` por tu modelo entrenado
+- **Hiperparámetros**: modifica `trainer.py` (n_estimators, test_size, etc.)
 
+## Limitaciones / Roadmap
 
----
+- [x] Detección binaria (ataque / no ataque)
+- [x] Monitoreo en tiempo real de CSV
+- [ ] Modelo multi-clase (tipo de ataque: XSS, SQLi, etc.)
+- [ ] Integración con SIEM (splunk, elastic)
+- [ ] Alertas por email/webhook
+- [ ] Dashboard web con métricas en vivo
+- [ ] Soporte para logs en formato JSON
 
 ## Licencia
 
-Este proyecto está bajo la [Licencia MIT](https://opensource.org/licenses/MIT).
+MIT
