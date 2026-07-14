@@ -1,4 +1,5 @@
 import pandas as pd
+import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report
@@ -35,8 +36,12 @@ model.fit(X_train, y_train)
 y_pred = model.predict(X_test)
 print(classification_report(y_test, y_pred))
 
-# Guardar el modelo si es necesario
-import joblib
+# Guardar el modelo
 joblib.dump(model, 'attack_detection_model.pkl')
 
-print("Entrenamiento completado y modelo guardado.")
+# Guardar los codificadores de etiquetas
+joblib.dump(le_ip, 'label_encoder_IP.pkl')
+joblib.dump(le_method, 'label_encoder_Method.pkl')
+joblib.dump(le_endpoint, 'label_encoder_Endpoint.pkl')
+
+print("Entrenamiento completado. Modelo y codificadores guardados.")
