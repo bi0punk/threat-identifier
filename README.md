@@ -3,34 +3,33 @@
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python)](https://python.org)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-1.3%2B-F7931E?logo=scikit-learn)](https://scikit-learn.org/)
-[![CI](https://github.com/drbash/threat-identifier/actions/workflows/ci.yml/badge.svg)](https://github.com/drbash/threat-identifier/actions)
+[![CI](https://github.com/bi0punk/threat-identifier/actions/workflows/ci.yml/badge.svg)](https://github.com/bi0punk/threat-identifier/actions)
 
-Sistema de detección de amenazas que usa Machine Learning para analizar logs de acceso (`access_logs.csv`) y predecir si un evento es un ataque, con monitoreo en tiempo real.
+Sistema de detección de amenazas que usa Machine Learning para analizar logs de acceso y predecir si un evento es un ataque, con monitoreo en tiempo real vía watchdog.
 
 ## Contenido
 
-- [Características](#caracter%C3%ADsticas)
+- [Características](#características)
 - [Stack](#stack)
 - [Estructura](#estructura)
 - [Requisitos](#requisitos)
-- [Instalación](#instalaci%C3%B3n)
+- [Instalación](#instalación)
 - [Uso](#uso)
 - [Tests](#tests)
-- [Configuración](#configuraci%C3%B3n)
-- [CI/CD](#cicd)
+- [Configuración](#configuración)
 - [Datos](#datos)
 - [Modelo](#detalles-del-modelo)
-- [Personalización](#personalizaci%C3%B3n)
 - [Limitaciones / Roadmap](#limitaciones--roadmap)
 - [Licencia](#licencia)
 
 ## Características
 
-- **Detección en tiempo real**: monitorea continuamente el archivo CSV de logs
-- **Modelo ML**: Random Forest Classifier preentrenado
+- **Detección basada en payload**: analiza patrones de SQLi, XSS, path traversal, command injection y scanners
+- **Detección en tiempo real**: monitorea archivos CSV de logs vía watchdog (eventos del filesystem, sin polling)
+- **Modelo ML**: Random Forest Classifier con 11 features
 - **Predicciones con confianza**: muestra el % de certeza por predicción
 - **Entrenador incluido**: `trainer.py` para reentrenar con datos propios
-- **Preprocesamiento automático**: codificación de IP, Method y Endpoint vía LabelEncoder
+- **Preprocesamiento automático**: LabelEncoder + features derivadas (entropía, caracteres especiales, patrones de ataque)
 
 ## Stack
 
@@ -38,18 +37,16 @@ Sistema de detección de amenazas que usa Machine Learning para analizar logs de
 |---|---|
 | Lenguaje | Python 3.11+ |
 | ML | scikit-learn (Random Forest) |
-| Procesamiento | pandas, joblib |
+| Procesamiento | pandas, joblib, numpy |
+| Monitoreo | watchdog (eventos del filesystem) |
 | Testing | pytest |
 
 ## Estructura
 
 ```
 threat-identifier/
-├── threat_hunt.py                   # Monitor en tiempo real
-├── trainer.py                       # Entrenamiento del modelo
-├── attack_detection_model.pkl       # Modelo preentrenado
-├── data.csv                         # Dataset de entrenamiento
-├── access_logs.csv                  # Logs a analizar (ejemplo)
+├── threat_hunt.py           # Monitor en tiempo real (watchdog)
+├── trainer.py               # Entrenamiento del modelo
 ├── tests/
 ├── .env.example
 ├── .github/workflows/ci.yml
@@ -57,6 +54,11 @@ threat-identifier/
 ├── requirements.txt
 └── README.md
 ```
+
+Archivos generados por `trainer.py` (gitignored):
+- `attack_detection_model.pkl` — modelo entrenado
+- `label_encoder_IP.pkl`, `label_encoder_Method.pkl`, `label_encoder_Endpoint.pkl` — encoders
+- `feature_columns.pkl` — orden de columnas para predicción
 
 ## Requisitos
 
@@ -66,12 +68,10 @@ threat-identifier/
 ## Instalación
 
 ```bash
-git clone https://github.com/drbash/threat-identifier.git
+git clone https://github.com/bi0punk/threat-identifier.git
 cd threat-identifier
 pip install -r requirements.txt
 ```
-
-Asegúrate de que `attack_detection_model.pkl` esté en el directorio raíz.
 
 ## Uso
 
@@ -81,7 +81,7 @@ Asegúrate de que `attack_detection_model.pkl` esté en el directorio raíz.
 python trainer.py
 ```
 
-Esto genera `attack_detection_model.pkl` y los label encoders.
+Genera el modelo, label encoders y `feature_columns.pkl`. Requiere un archivo `data.csv` con columnas `IP,Timestamp,Method,Endpoint,Status`.
 
 ### Monitorear logs en tiempo real
 
@@ -89,13 +89,16 @@ Esto genera `attack_detection_model.pkl` y los label encoders.
 python threat_hunt.py
 ```
 
+Usa watchdog para detectar nuevas líneas en `access_logs.csv` sin polling.
+
 ### Ejemplo de salida
 
-```plaintext
+```
 Monitoreando access_logs.csv... (Total de líneas iniciales: 100)
-Columnas de los últimos datos: ['IP', 'Method', 'Endpoint', 'Status', 'Timestamp']
-Línea 101: No Ataque (Precisión: 96.75%)
-Línea 102: Ataque (Precisión: 89.30%)
+Nuevas líneas detectadas: 3
+Línea 101: Normal (Precisión: 98.75%)
+Línea 102: ATAQUE (Precisión: 89.30%)
+Línea 103: Normal (Precisión: 96.12%)
 ```
 
 ## Tests
@@ -111,43 +114,48 @@ Variables de entorno (ver `.env.example`):
 
 | Variable | Default | Descripción |
 |---|---|---|
-| `CSV_FILE` | `access_logs.csv` | Ruta al archivo de logs |
-
-## CI/CD
-
-GitHub Actions ejecuta lint (Ruff) y tests (pytest) en cada push/PR.
+| `CSV_FILE_PATH` | `access_logs.csv` | Ruta al archivo de logs a monitorear |
+| `MODEL_PATH` | `attack_detection_model.pkl` | Ruta al modelo entrenado |
 
 ## Datos
 
-El dataset `data.csv` contiene registros históricos con columnas: `IP`, `Timestamp`, `Method`, `Endpoint`, `Status`. El modelo etiqueta como ataque (`Attack=1`) cuando `Status=404`.
+El dataset `data.csv` (no incluido en el repo) debe contener registros históricos con columnas: `IP`, `Timestamp`, `Method`, `Endpoint`, `Status`.
 
 ## Detalles del modelo
+
+### Etiquetado de ataques
+
+El modelo etiqueta como ataque (`Attack=1`) cuando:
+- El endpoint contiene patrones de SQLi, XSS, path traversal o command injection
+- El endpoint contiene firmas de scanners conocidos
+- El código de status es 401, 403, 429 (intentos de acceso no autorizado)
+- El código de status es 404 (potencial escaneo de endpoints)
 
 ### Algoritmo
 
 Random Forest Classifier con 100 estimadores.
 
-### Preprocesamiento
+### Features (11 en total)
 
-- **Codificación**: `IP`, `Method`, `Endpoint` → LabelEncoder
-- **Características ignoradas**: `Status`, `Timestamp`
-
-### Features usadas
-
-- `IP` (origen)
-- `Method` (GET, POST, etc.)
-- `Endpoint` (ruta solicitada)
-
-## Personalización
-
-- **CSV propio**: cambia la ruta en `threat_hunt.py` (variable `csv_file_path`)
-- **Modelo propio**: reemplaza `attack_detection_model.pkl` por tu modelo entrenado
-- **Hiperparámetros**: modifica `trainer.py` (n_estimators, test_size, etc.)
+| Feature | Tipo | Descripción |
+|---|---|---|
+| `IP_enc` | Categórica | IP de origen (LabelEncoded) |
+| `Method_enc` | Categórica | Método HTTP (LabelEncoded) |
+| `Endpoint_enc` | Categórica | Ruta solicitada (LabelEncoded) |
+| `endpoint_length` | Numérica | Longitud del endpoint |
+| `special_char_ratio` | Numérica | Proporción de caracteres especiales |
+| `has_sqli` | Booleana | Contiene patrón SQL injection |
+| `has_xss` | Booleana | Contiene patrón XSS |
+| `has_path_traversal` | Booleana | Contiene patrón path traversal |
+| `has_cmd_injection` | Booleana | Contiene patrón command injection |
+| `is_scanner` | Booleana | Contiene firma de scanner |
+| `entropy` | Numérica | Entropía de Shannon del endpoint |
 
 ## Limitaciones / Roadmap
 
 - [x] Detección binaria (ataque / no ataque)
-- [x] Monitoreo en tiempo real de CSV
+- [x] Monitoreo en tiempo real vía watchdog
+- [x] Features de payload (SQLi, XSS, path traversal, etc.)
 - [ ] Modelo multi-clase (tipo de ataque: XSS, SQLi, etc.)
 - [ ] Integración con SIEM (splunk, elastic)
 - [ ] Alertas por email/webhook
