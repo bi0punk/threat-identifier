@@ -1,11 +1,16 @@
-import pandas as pd
-import joblib
-import time
-import os
-import signal
 import logging
+import math
+import os
+import re
+import signal
 import sys
+import time
 from pathlib import Path
+
+import joblib
+import pandas as pd
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,82 +19,155 @@ logging.basicConfig(
 )
 log = logging.getLogger("threat_hunt")
 
-model = joblib.load('attack_detection_model.pkl')
+MODEL_PATH = os.getenv("MODEL_PATH", "attack_detection_model.pkl")
+
+try:
+    model = joblib.load(MODEL_PATH)
+    log.info("Modelo cargado: %s", MODEL_PATH)
+except Exception:
+    log.exception("No se pudo cargar el modelo desde %s", MODEL_PATH)
+    sys.exit(1)
+
+feature_cols = joblib.load("feature_columns.pkl")
 
 label_encoders = {}
-for col in ['IP', 'Method', 'Endpoint']:
-    label_encoders[col] = joblib.load(f'label_encoder_{col}.pkl')
+for col in ["IP", "Method", "Endpoint"]:
+    path = f"label_encoder_{col}.pkl"
+    try:
+        label_encoders[col] = joblib.load(path)
+    except FileNotFoundError:
+        log.error("Label encoder no encontrado: %s. Ejecute trainer.py primero.", path)
+        sys.exit(1)
 
-_running = True
 
-def _handle_signal(signum, frame):
-    global _running
-    log.info(f"Señal {signum} recibida. Deteniendo monitor...")
-    _running = False
+_ATTACK_PATTERNS = {
+    "sqli": r"(?i)(union.*select|or\s+[\"']?\s*[\"']?\s*=|\bselect\b.*\bfrom\b|--[\s]|;\s*--|\binsert\b.*\binto\b)",
+    "xss": r"(?i)(<script|alert\s*\(|onerror\s*=|onload\s*=|javascript\s*:|<\/?img|\bprompt\s*\()",
+    "path_traversal": r"(\.\./|\.\.\%2f|/etc/passwd|/windows/win\.ini|%00|\.\.\%5c)",
+    "cmd_injection": r"(\||;\s*(ls|cat|id|whoami|dir|type)|`[^`]+`|\$\([^)]+\))",
+    "scanner": r"(?i)(w00tw00t|acunetix|nikto|nessus|sqlmap|nmap)",
+}
 
-signal.signal(signal.SIGINT, _handle_signal)
-signal.signal(signal.SIGTERM, _handle_signal)
+
+def shannon_entropy(s: str) -> float:
+    if not s:
+        return 0.0
+    counts = {}
+    for c in s:
+        counts[c] = counts.get(c, 0) + 1
+    length = len(s)
+    return -sum((cnt / length) * math.log2(cnt / length) for cnt in counts.values())
+
+
+def extract_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    ep = df["Endpoint"].astype(str)
+    df["endpoint_length"] = ep.apply(len)
+    df["special_char_ratio"] = ep.apply(lambda x: sum(1 for c in x if c in "'\";|<>()%$") / max(len(x), 1))
+    for name, pattern in _ATTACK_PATTERNS.items():
+        df["has_" + name] = ep.apply(lambda x, p=pattern: int(bool(re.search(p, x))))
+    df["entropy"] = ep.apply(shannon_entropy)
+    return df
+
 
 def _transform_with_unknown(encoder, values):
     known = set(encoder.classes_)
     return [encoder.transform([v])[0] if v in known else -1 for v in values]
 
+
 def preprocesar_datos(nuevos_datos):
-    for col in ['IP', 'Method', 'Endpoint']:
+    df = nuevos_datos.copy()
+    for col in ["IP", "Method", "Endpoint"]:
         le = label_encoders[col]
-        nuevos_datos[col] = _transform_with_unknown(le, nuevos_datos[col].astype(str))
-    return nuevos_datos
+        df[col + "_enc"] = _transform_with_unknown(le, df[col].astype(str))
+    df = extract_features(df)
+    return df[feature_cols]
+
 
 def hacer_predicciones(nuevos_datos):
-    nuevos_datos = preprocesar_datos(nuevos_datos)
-    nuevos_datos = nuevos_datos.drop(columns=['Status', 'Timestamp'], errors='ignore')
-    predicciones = model.predict(nuevos_datos)
-    probabilidades = model.predict_proba(nuevos_datos)
+    X = preprocesar_datos(nuevos_datos)
+    predicciones = model.predict(X)
+    probabilidades = model.predict_proba(X)
     return predicciones, probabilidades
 
 
-def monitor_csv(file_path, last_line_count):
+_running = True
+
+
+def _handle_signal(signum, frame):
     global _running
-    while _running:
+    log.info("Senal %s recibida. Deteniendo monitor...", signum)
+    _running = False
+
+
+signal.signal(signal.SIGINT, _handle_signal)
+signal.signal(signal.SIGTERM, _handle_signal)
+
+
+class LogFileHandler(FileSystemEventHandler):
+    def __init__(self, file_path):
+        self.file_path = str(Path(file_path).resolve())
+        self.last_line_count = 0
         try:
-            if not Path(file_path).exists():
-                log.warning(f"Archivo {file_path} no encontrado. Esperando...")
-                time.sleep(5)
-                continue
+            data = pd.read_csv(self.file_path)
+            self.last_line_count = data.shape[0]
+            log.info("Archivo inicial con %d lineas", self.last_line_count)
+        except (FileNotFoundError, pd.errors.EmptyDataError):
+            log.warning("Archivo %s no encontrado o vacio. Iniciando desde 0.", self.file_path)
 
-            datos_nuevos = pd.read_csv(file_path)
-            current_line_count = datos_nuevos.shape[0]
+    def on_modified(self, event):
+        if not _running:
+            return
+        resolved = str(Path(event.src_path).resolve())
+        if resolved != self.file_path:
+            return
+        self._process_new_lines()
 
-            if current_line_count > last_line_count:
-                ultimos_datos = datos_nuevos.tail(current_line_count - last_line_count)
-                log.info("Nuevas líneas detectadas: %d", len(ultimos_datos))
+    def _process_new_lines(self):
+        try:
+            datos = pd.read_csv(self.file_path)
+            current = datos.shape[0]
 
-                predicciones, probabilidades = hacer_predicciones(ultimos_datos)
+            if current > self.last_line_count:
+                new_data = datos.tail(current - self.last_line_count)
+                log.info("Nuevas lineas detectadas: %d", len(new_data))
 
-                for i, (prediccion, probabilidad) in enumerate(zip(predicciones, probabilidades)):
-                    porcentaje_certeza = max(probabilidad) * 100
-                    estado = "Ataque" if prediccion == 1 else "No Ataque"
-                    log.info("Línea %d: %s (Precisión: %.2f%%)", last_line_count + i + 1, estado, porcentaje_certeza)
+                predicciones, probabilidades = hacer_predicciones(new_data)
 
-                last_line_count = current_line_count
-            elif current_line_count < last_line_count:
-                log.warning("El archivo fue rotado/truncado. Reiniciando conteo.")
-                last_line_count = 0
+                for i, (pred, prob) in enumerate(zip(predicciones, probabilidades)):
+                    pct = max(prob) * 100
+                    estado = "ATAQUE" if pred == 1 else "Normal"
+                    log.info(
+                        "Linea %d: %s (Precision: %.2f%%)",
+                        self.last_line_count + i + 1, estado, pct,
+                    )
+
+                self.last_line_count = current
+            elif current < self.last_line_count:
+                log.warning("Archivo rotado/truncado. Reiniciando conteo.")
+                self.last_line_count = 0
+
         except pd.errors.EmptyDataError:
-            log.warning("Archivo CSV vacío. Esperando...")
-        except Exception as e:
-            log.error("Error en el monitoreo: %s", e)
-        time.sleep(5)
+            log.warning("Archivo CSV vacio.")
+        except Exception:
+            log.exception("Error procesando nuevas lineas")
+
+
+def monitor(file_path: str):
+    handler = LogFileHandler(file_path)
+    observer = Observer()
+    watch_dir = str(Path(file_path).parent) or "."
+    observer.schedule(handler, path=watch_dir, recursive=False)
+    observer.start()
+    log.info("Monitoreando %s via watchdog...", file_path)
+    try:
+        while _running:
+            time.sleep(1)
+    finally:
+        observer.stop()
+        observer.join()
+
 
 if __name__ == "__main__":
     csv_file_path = os.getenv("CSV_FILE_PATH", "access_logs.csv")
-
-    try:
-        initial_data = pd.read_csv(csv_file_path)
-        line_count = initial_data.shape[0]
-    except (FileNotFoundError, pd.errors.EmptyDataError):
-        line_count = 0
-        log.warning("Archivo inicial %s no encontrado o vacío. Iniciando desde 0.", csv_file_path)
-
-    log.info("Monitoreando %s... (Total de líneas iniciales: %d)", csv_file_path, line_count)
-    monitor_csv(csv_file_path, line_count)
+    monitor(csv_file_path)

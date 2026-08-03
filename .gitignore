@@ -121,8 +121,7 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
-# Model files
-*.pkl
+# Model files (label encoders are tracked intentionally)
 
 # Environments
 .env
