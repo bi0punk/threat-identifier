@@ -1,35 +1,55 @@
-# Attack Detection System
+# threat-identifier
+
+Sistema de detección de amenazas que usa Machine Learning para analizar logs de acceso y predecir si un evento es un ataque, con monitoreo en tiempo real via watchdog.
 
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python)](https://python.org)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-1.3%2B-F7931E?logo=scikit-learn)](https://scikit-learn.org/)
 [![CI](https://github.com/bi0punk/threat-identifier/actions/workflows/ci.yml/badge.svg)](https://github.com/bi0punk/threat-identifier/actions)
 
-Sistema de detección de amenazas que usa Machine Learning para analizar logs de acceso y predecir si un evento es un ataque, con monitoreo en tiempo real vía watchdog.
-
 ## Contenido
 
 - [Características](#características)
+- [Arquitectura](#arquitectura)
 - [Stack](#stack)
-- [Estructura](#estructura)
-- [Requisitos](#requisitos)
+- [Estructura del repositorio](#estructura-del-repositorio)
 - [Instalación](#instalación)
 - [Uso](#uso)
-- [Tests](#tests)
 - [Configuración](#configuración)
 - [Datos](#datos)
-- [Modelo](#detalles-del-modelo)
-- [Limitaciones / Roadmap](#limitaciones--roadmap)
+- [Detalles del modelo](#detalles-del-modelo)
+- [Tests / CI](#tests--ci)
+- [Roadmap](#roadmap)
 - [Licencia](#licencia)
 
 ## Características
 
 - **Detección basada en payload**: analiza patrones de SQLi, XSS, path traversal, command injection y scanners
-- **Detección en tiempo real**: monitorea archivos CSV de logs vía watchdog (eventos del filesystem, sin polling)
+- **Detección en tiempo real**: monitorea archivos CSV de logs via watchdog (eventos del filesystem, sin polling)
 - **Modelo ML**: Random Forest Classifier con 11 features
 - **Predicciones con confianza**: muestra el % de certeza por predicción
 - **Entrenador incluido**: `trainer.py` para reentrenar con datos propios
 - **Preprocesamiento automático**: LabelEncoder + features derivadas (entropía, caracteres especiales, patrones de ataque)
+
+## Arquitectura
+
+```mermaid
+flowchart TD
+  TR[trainer.py] -->|lee data.csv| D[Datos: IP / Timestamp / Method / Endpoint / Status]
+  D -->|LabelEncoder + features| FE[Feature engineering]
+  FE --> RF[Random Forest Classifier 100 estimadores]
+  RF --> M[attack_detection_model.pkl + label encoders + feature_columns.pkl]
+
+  TH[threat_hunt.py] -->|watchdog| FSObserver[Observer filesystem]
+  FSObserver -->|evento modified| LH[LogFileHandler]
+  LH -->|lea nuevas líneas de access_logs.csv| L[Añade nuevas líneas]
+  L -->|carga modelo + encoders| M
+  L --> PP[preprocesar_datos: features + encodings]
+  PP --> PR[model.predict + predict_proba]
+  PR --> OUT[Línea: ATAQUE/Normal + % precisión]
+
+  SIG[señal SIGINT/SIGTERM] -->|detiene loop| LH
+```
 
 ## Stack
 
@@ -41,15 +61,17 @@ Sistema de detección de amenazas que usa Machine Learning para analizar logs de
 | Monitoreo | watchdog (eventos del filesystem) |
 | Testing | pytest |
 
-## Estructura
+## Estructura del repositorio
 
 ```
 threat-identifier/
 ├── threat_hunt.py           # Monitor en tiempo real (watchdog)
 ├── trainer.py               # Entrenamiento del modelo
 ├── tests/
+│   └── test_smoke.py
 ├── .env.example
-├── .github/workflows/ci.yml
+├── .github/workflows/
+│   └── ci.yml
 ├── pyproject.toml
 ├── requirements.txt
 └── README.md
@@ -60,11 +82,6 @@ Archivos generados por `trainer.py` (gitignored):
 - `label_encoder_IP.pkl`, `label_encoder_Method.pkl`, `label_encoder_Endpoint.pkl` — encoders
 - `feature_columns.pkl` — orden de columnas para predicción
 
-## Requisitos
-
-- Python 3.11+
-- pip
-
 ## Instalación
 
 ```bash
@@ -72,6 +89,8 @@ git clone https://github.com/bi0punk/threat-identifier.git
 cd threat-identifier
 pip install -r requirements.txt
 ```
+
+Requisitos: Python 3.11+ y pip.
 
 ## Uso
 
@@ -99,13 +118,6 @@ Nuevas líneas detectadas: 3
 Línea 101: Normal (Precisión: 98.75%)
 Línea 102: ATAQUE (Precisión: 89.30%)
 Línea 103: Normal (Precisión: 96.12%)
-```
-
-## Tests
-
-```bash
-pip install pytest
-pytest tests/ -v
 ```
 
 ## Configuración
@@ -151,10 +163,19 @@ Random Forest Classifier con 100 estimadores.
 | `is_scanner` | Booleana | Contiene firma de scanner |
 | `entropy` | Numérica | Entropía de Shannon del endpoint |
 
-## Limitaciones / Roadmap
+## Tests / CI
+
+```bash
+pip install pytest
+pytest tests/ -v
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) ejecuta ruff lint + pytest sobre Python 3.11 en cada push/PR.
+
+## Roadmap
 
 - [x] Detección binaria (ataque / no ataque)
-- [x] Monitoreo en tiempo real vía watchdog
+- [x] Monitoreo en tiempo real via watchdog
 - [x] Features de payload (SQLi, XSS, path traversal, etc.)
 - [ ] Modelo multi-clase (tipo de ataque: XSS, SQLi, etc.)
 - [ ] Integración con SIEM (splunk, elastic)
