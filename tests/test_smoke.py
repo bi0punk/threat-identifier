@@ -12,7 +12,6 @@ def test_gitignore_exists():
 
 def test_pkl_not_tracked():
     result = subprocess.run(
-        ["git", "ls-files", "attack_detection_model.pkl"],
-        capture_output=True, text=True
+        ["git", "ls-files", "attack_detection_model.pkl"], capture_output=True, text=True
     )
     assert result.stdout.strip() == "", f"PKL file still tracked: {result.stdout.strip()}"

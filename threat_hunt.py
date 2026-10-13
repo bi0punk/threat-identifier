@@ -52,7 +52,7 @@ _ATTACK_PATTERNS = {
 def shannon_entropy(s: str) -> float:
     if not s:
         return 0.0
-    counts = {}
+    counts: dict[str, int] = {}
     for c in s:
         counts[c] = counts.get(c, 0) + 1
     length = len(s)
@@ -63,7 +63,9 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     ep = df["Endpoint"].astype(str)
     df["endpoint_length"] = ep.apply(len)
-    df["special_char_ratio"] = ep.apply(lambda x: sum(1 for c in x if c in "'\";|<>()%$") / max(len(x), 1))
+    df["special_char_ratio"] = ep.apply(
+        lambda x: sum(1 for c in x if c in "'\";|<>()%$") / max(len(x), 1)
+    )
     for name, pattern in _ATTACK_PATTERNS.items():
         df["has_" + name] = ep.apply(lambda x, p=pattern: int(bool(re.search(p, x))))
     df["entropy"] = ep.apply(shannon_entropy)
@@ -94,7 +96,7 @@ def hacer_predicciones(nuevos_datos):
 _running = True
 
 
-def _handle_signal(signum, frame):
+def _handle_signal(signum, _frame):
     global _running
     log.info("Senal %s recibida. Deteniendo monitor...", signum)
     _running = False
@@ -134,12 +136,14 @@ class LogFileHandler(FileSystemEventHandler):
 
                 predicciones, probabilidades = hacer_predicciones(new_data)
 
-                for i, (pred, prob) in enumerate(zip(predicciones, probabilidades)):
+                for i, (pred, prob) in enumerate(zip(predicciones, probabilidades, strict=False)):
                     pct = max(prob) * 100
                     estado = "ATAQUE" if pred == 1 else "Normal"
                     log.info(
                         "Linea %d: %s (Precision: %.2f%%)",
-                        self.last_line_count + i + 1, estado, pct,
+                        self.last_line_count + i + 1,
+                        estado,
+                        pct,
                     )
 
                 self.last_line_count = current

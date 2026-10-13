@@ -1,5 +1,6 @@
 import math
 import re
+
 import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -20,23 +21,35 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if "Endpoint" in df.columns:
         df["endpoint_length"] = df["Endpoint"].astype(str).apply(len)
-        df["special_char_ratio"] = df["Endpoint"].astype(str).apply(
-            lambda x: sum(1 for c in x if c in "'\";|<>()%$") / max(len(x), 1)
+        df["special_char_ratio"] = (
+            df["Endpoint"]
+            .astype(str)
+            .apply(lambda x: sum(1 for c in x if c in "'\";|<>()%$") / max(len(x), 1))
         )
-        df["has_sqli"] = df["Endpoint"].astype(str).apply(
-            lambda x: int(bool(re.search(ATTACK_PATTERNS["sqli"], x)))
+        df["has_sqli"] = (
+            df["Endpoint"]
+            .astype(str)
+            .apply(lambda x: int(bool(re.search(ATTACK_PATTERNS["sqli"], x))))
         )
-        df["has_xss"] = df["Endpoint"].astype(str).apply(
-            lambda x: int(bool(re.search(ATTACK_PATTERNS["xss"], x)))
+        df["has_xss"] = (
+            df["Endpoint"]
+            .astype(str)
+            .apply(lambda x: int(bool(re.search(ATTACK_PATTERNS["xss"], x))))
         )
-        df["has_path_traversal"] = df["Endpoint"].astype(str).apply(
-            lambda x: int(bool(re.search(ATTACK_PATTERNS["path_traversal"], x)))
+        df["has_path_traversal"] = (
+            df["Endpoint"]
+            .astype(str)
+            .apply(lambda x: int(bool(re.search(ATTACK_PATTERNS["path_traversal"], x))))
         )
-        df["has_cmd_injection"] = df["Endpoint"].astype(str).apply(
-            lambda x: int(bool(re.search(ATTACK_PATTERNS["cmd_injection"], x)))
+        df["has_cmd_injection"] = (
+            df["Endpoint"]
+            .astype(str)
+            .apply(lambda x: int(bool(re.search(ATTACK_PATTERNS["cmd_injection"], x))))
         )
-        df["is_scanner"] = df["Endpoint"].astype(str).apply(
-            lambda x: int(bool(re.search(ATTACK_PATTERNS["scanner"], x)))
+        df["is_scanner"] = (
+            df["Endpoint"]
+            .astype(str)
+            .apply(lambda x: int(bool(re.search(ATTACK_PATTERNS["scanner"], x))))
         )
         df["entropy"] = df["Endpoint"].astype(str).apply(lambda x: shannon_entropy(x))
     return df
@@ -45,7 +58,7 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
 def shannon_entropy(s: str) -> float:
     if not s:
         return 0.0
-    counts = {}
+    counts: dict[str, int] = {}
     for c in s:
         counts[c] = counts.get(c, 0) + 1
     length = len(s)
@@ -56,7 +69,7 @@ def label_attack(row) -> int:
     if row["Status"] == 404:
         return 1
     if pd.notna(row["Endpoint"]):
-        for pattern_name, pattern in ATTACK_PATTERNS.items():
+        for _pattern_name, pattern in ATTACK_PATTERNS.items():
             if re.search(pattern, str(row["Endpoint"])):
                 return 1
     if row["Status"] in (401, 403, 429):
@@ -78,10 +91,17 @@ le_endpoint = LabelEncoder()
 data["Endpoint_enc"] = le_endpoint.fit_transform(data["Endpoint"].astype(str))
 
 feature_cols = [
-    "IP_enc", "Method_enc", "Endpoint_enc",
-    "endpoint_length", "special_char_ratio",
-    "has_sqli", "has_xss", "has_path_traversal",
-    "has_cmd_injection", "is_scanner", "entropy",
+    "IP_enc",
+    "Method_enc",
+    "Endpoint_enc",
+    "endpoint_length",
+    "special_char_ratio",
+    "has_sqli",
+    "has_xss",
+    "has_path_traversal",
+    "has_cmd_injection",
+    "is_scanner",
+    "entropy",
 ]
 X = data[feature_cols]
 y = data["Attack"]
